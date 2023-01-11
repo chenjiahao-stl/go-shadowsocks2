@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"github.com/shadowsocks/go-shadowsocks2/httpproxy"
 	"io"
 	"io/ioutil"
 	"net"
@@ -13,12 +14,18 @@ import (
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
-// Create a SOCKS server listening on addr and proxy to server.
+func httpLocal(addr, server string, shadow func(net.Conn) net.Conn) {
+	logf("http proxy %s <-> %s", addr, server)
+	tcpLocal(addr, server, shadow, func(c net.Conn) (socks.Addr, error) { return httpproxy.Handshake(c) })
+}
+
+// Create a SOCKS server listening on addr and proxy to server.  //-socks :1080,server_address
 func socksLocal(addr, server string, shadow func(net.Conn) net.Conn) {
 	logf("SOCKS proxy %s <-> %s", addr, server)
 	tcpLocal(addr, server, shadow, func(c net.Conn) (socks.Addr, error) { return socks.Handshake(c) })
 }
 
+// :8053,server_address,8.8.8.8:53,ciph.StreamConn
 // Create a TCP tunnel from addr to target via server.
 func tcpTun(addr, server, target string, shadow func(net.Conn) net.Conn) {
 	tgt := socks.ParseAddr(target)
@@ -32,14 +39,14 @@ func tcpTun(addr, server, target string, shadow func(net.Conn) net.Conn) {
 
 // Listen on addr and proxy to server to reach target from getAddr.
 func tcpLocal(addr, server string, shadow func(net.Conn) net.Conn, getAddr func(net.Conn) (socks.Addr, error)) {
-	l, err := net.Listen("tcp", addr)
+	l, err := net.Listen("tcp", addr) //客户端监听本地8053端口
 	if err != nil {
 		logf("failed to listen on %s: %v", addr, err)
 		return
 	}
 
 	for {
-		c, err := l.Accept()
+		c, err := l.Accept() //客户端连接
 		if err != nil {
 			logf("failed to accept: %s", err)
 			continue
@@ -47,7 +54,7 @@ func tcpLocal(addr, server string, shadow func(net.Conn) net.Conn, getAddr func(
 
 		go func() {
 			defer c.Close()
-			tgt, err := getAddr(c)
+			tgt, err := getAddr(c) //客户端:获取dns服务器信息?   客户端socks:获取到目标服务器地址
 			if err != nil {
 
 				// UDP: keep the connection until disconnect then free the UDP socket
@@ -68,16 +75,16 @@ func tcpLocal(addr, server string, shadow func(net.Conn) net.Conn, getAddr func(
 				return
 			}
 
-			rc, err := net.Dial("tcp", server)
+			rc, err := net.Dial("tcp", server) //客户端：连接server_address -> :8488
 			if err != nil {
 				logf("failed to connect to server %v: %v", server, err)
 				return
 			}
 			defer rc.Close()
 			if config.TCPCork {
-				rc = timedCork(rc, 10*time.Millisecond, 1280)
+				rc = timedCork(rc, 10*time.Millisecond, 1280) //将原本的conn 包装一下 功能增强 合并写入前几个数据包->将写功能进行增强,每10毫秒或者达到1280b才进行写入(只使用一次)
 			}
-			rc = shadow(rc)
+			rc = shadow(rc) //conn增强?  变成一个需要经过加解密的流
 
 			if _, err = rc.Write(tgt); err != nil {
 				logf("failed to send target address: %v", err)
@@ -85,6 +92,7 @@ func tcpLocal(addr, server string, shadow func(net.Conn) net.Conn, getAddr func(
 			}
 
 			logf("proxy %s <-> %s <-> %s", c.RemoteAddr(), server, tgt)
+			//客户端、服务端数据交互
 			if err = relay(rc, c); err != nil {
 				logf("relay error: %v", err)
 			}
@@ -94,7 +102,7 @@ func tcpLocal(addr, server string, shadow func(net.Conn) net.Conn, getAddr func(
 
 // Listen on addr for incoming connections.
 func tcpRemote(addr string, shadow func(net.Conn) net.Conn) {
-	l, err := net.Listen("tcp", addr)
+	l, err := net.Listen("tcp", addr) //监听服务端本地端口 :8848
 	if err != nil {
 		logf("failed to listen on %s: %v", addr, err)
 		return
@@ -102,7 +110,7 @@ func tcpRemote(addr string, shadow func(net.Conn) net.Conn) {
 
 	logf("listening TCP on %s", addr)
 	for {
-		c, err := l.Accept()
+		c, err := l.Accept() //与本地客户端建立一个连接
 		if err != nil {
 			logf("failed to accept: %v", err)
 			continue
@@ -111,11 +119,11 @@ func tcpRemote(addr string, shadow func(net.Conn) net.Conn) {
 		go func() {
 			defer c.Close()
 			if config.TCPCork {
-				c = timedCork(c, 10*time.Millisecond, 1280)
+				c = timedCork(c, 10*time.Millisecond, 1280) //将原本的conn 包装一下 功能增强 合并写入前几个数据包->将写功能进行增强,每10毫秒或者达到1280b才进行写入(只使用一次)
 			}
-			sc := shadow(c)
+			sc := shadow(c) //将原本的conn 包装一下 功能增强 read、write等操作
 
-			tgt, err := socks.ReadAddr(sc)
+			tgt, err := socks.ReadAddr(sc) //获取目标tager地址
 			if err != nil {
 				logf("failed to get target address from %v: %v", c.RemoteAddr(), err)
 				// drain c to avoid leaking server behavioral features

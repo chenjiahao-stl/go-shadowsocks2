@@ -176,11 +176,11 @@ func Handshake(rw io.ReadWriter) (Addr, error) {
 	if _, err := io.ReadFull(rw, buf[:2]); err != nil {
 		return nil, err
 	}
-	nmethods := buf[1]
+	nmethods := buf[1] //客户端支持的认证方法数量
 	if _, err := io.ReadFull(rw, buf[:nmethods]); err != nil {
 		return nil, err
 	}
-	// write VER METHOD
+	// write VER METHOD 无需认证
 	if _, err := rw.Write([]byte{5, 0}); err != nil {
 		return nil, err
 	}

@@ -74,8 +74,8 @@ func PickCipher(name string, key []byte, password string) (Cipher, error) {
 		if len(key) != choice.KeySize {
 			return nil, shadowaead.KeySizeError(choice.KeySize)
 		}
-		aead, err := choice.New(key)
-		return &aeadCipher{aead}, err
+		aead, err := choice.New(key)  //根据key生成加密类
+		return &aeadCipher{aead}, err //对加解密类进行增强,构造出一个能读写的流
 	}
 
 	return nil, ErrCipherNotSupported

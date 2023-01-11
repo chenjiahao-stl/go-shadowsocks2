@@ -43,6 +43,7 @@ func main() {
 		TCP        bool
 		Plugin     string
 		PluginOpts string
+		HttpProxy  string
 	}
 
 	flag.BoolVar(&config.Verbose, "verbose", false, "verbose mode")
@@ -64,8 +65,10 @@ func main() {
 	flag.BoolVar(&flags.TCP, "tcp", true, "(server-only) enable TCP support")
 	flag.BoolVar(&config.TCPCork, "tcpcork", false, "coalesce writing first few packets")
 	flag.DurationVar(&config.UDPTimeout, "udptimeout", 5*time.Minute, "UDP tunnel timeout")
+	flag.StringVar(&flags.HttpProxy, "http-proxy", "", "(client-only) http CONNECT listen address")
 	flag.Parse()
 
+	fmt.Println("hello word!")
 	if flags.Keygen > 0 {
 		key := make([]byte, flags.Keygen)
 		io.ReadFull(rand.Reader, key)
@@ -88,11 +91,11 @@ func main() {
 	}
 
 	if flags.Client != "" { // client mode
-		addr := flags.Client
+		addr := flags.Client //server_address
 		cipher := flags.Cipher
 		password := flags.Password
 		var err error
-
+		//ss://AEAD_CHACHA20_POLY1305:123456@[127.0.0.1]:8488
 		if strings.HasPrefix(addr, "ss://") {
 			addr, cipher, password, err = parseURL(addr)
 			if err != nil {
@@ -102,7 +105,7 @@ func main() {
 
 		udpAddr := addr
 
-		ciph, err := core.PickCipher(cipher, key, password)
+		ciph, err := core.PickCipher(cipher, key, password) //构造出一个具有加解密的类
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -115,22 +118,22 @@ func main() {
 		}
 
 		if flags.UDPTun != "" {
-			for _, tun := range strings.Split(flags.UDPTun, ",") {
+			for _, tun := range strings.Split(flags.UDPTun, ",") { // -udptun :8053=8.8.8.8:53,:8054=8.8.4.4:53
 				p := strings.Split(tun, "=")
 				go udpLocal(p[0], udpAddr, p[1], ciph.PacketConn)
 			}
 		}
 
 		if flags.TCPTun != "" {
-			for _, tun := range strings.Split(flags.TCPTun, ",") {
-				p := strings.Split(tun, "=")
-				go tcpTun(p[0], addr, p[1], ciph.StreamConn)
+			for _, tun := range strings.Split(flags.TCPTun, ",") { // -tcptun :8053=8.8.8.8:53,:8054=8.8.4.4:53
+				p := strings.Split(tun, "=")                 //
+				go tcpTun(p[0], addr, p[1], ciph.StreamConn) //:8053,server_address,8.8.8.8:53,ciph.StreamConn
 			}
 		}
 
 		if flags.Socks != "" {
 			socks.UDPEnabled = flags.UDPSocks
-			go socksLocal(flags.Socks, addr, ciph.StreamConn)
+			go socksLocal(flags.Socks, addr, ciph.StreamConn) //-socks :1080,server_address
 			if flags.UDPSocks {
 				go udpSocksLocal(flags.Socks, udpAddr, ciph.PacketConn)
 			}
@@ -143,12 +146,16 @@ func main() {
 		if flags.RedirTCP6 != "" {
 			go redir6Local(flags.RedirTCP6, addr, ciph.StreamConn)
 		}
+
+		if flags.HttpProxy != "" {
+			go httpLocal(flags.HttpProxy, addr, ciph.StreamConn)
+		}
 	}
 
 	if flags.Server != "" { // server mode
-		addr := flags.Server
-		cipher := flags.Cipher
-		password := flags.Password
+		addr := flags.Server       // Host
+		cipher := flags.Cipher     //username
+		password := flags.Password //password
 		var err error
 
 		if strings.HasPrefix(addr, "ss://") {
